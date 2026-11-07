@@ -199,6 +199,15 @@ defmodule Exqlite.Sqlite3 do
   def prepare_single(conn, sql), do: Sqlite3NIF.prepare_single(conn, sql)
 
   @doc """
+  Sets SQLite's maximum string/BLOB/encoded-row length for this connection and
+  returns the previous limit. Pass -1 to read the current limit without changing
+  it. SQLite clamps the value to its compiled maximum; this applies before values
+  are copied from SQLite into BEAM memory.
+  """
+  @spec limit(db(), :length, integer()) :: {:ok, integer()} | {:error, reason()}
+  def limit(conn, :length, value), do: Sqlite3NIF.limit(conn, 0, value)
+
+  @doc """
   Resets a prepared statement.
 
   See: https://sqlite.org/c3ref/reset.html

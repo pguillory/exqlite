@@ -61,6 +61,9 @@ defmodule Exqlite.Sqlite3NIF do
   @spec prepare_single(db(), String.t()) :: {:ok, statement()} | {:error, reason()}
   def prepare_single(_conn, _sql), do: :erlang.nif_error(:not_loaded)
 
+  @spec limit(db(), integer(), integer()) :: {:ok, integer()} | {:error, reason()}
+  def limit(_conn, _category, _value), do: :erlang.nif_error(:not_loaded)
+
   @spec step(db(), statement()) :: :done | :busy | {:row, row()} | {:error, reason()}
   def step(_conn, _statement), do: :erlang.nif_error(:not_loaded)
 

@@ -883,6 +883,26 @@ exqlite_prepare_single(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
     return exqlite_prepare_impl(env, argc, argv, 1);
 }
 
+ERL_NIF_TERM
+exqlite_limit(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+    connection_t* conn = NULL;
+    int category, value;
+    if (argc != 3 || !enif_get_resource(env, argv[0], connection_type, (void**)&conn)
+        || !enif_get_int(env, argv[1], &category) || category != SQLITE_LIMIT_LENGTH
+        || !enif_get_int(env, argv[2], &value) || value < -1) {
+        return enif_make_badarg(env);
+    }
+    connection_acquire_lock(conn);
+    if (conn->db == NULL) {
+        connection_release_lock(conn);
+        return make_error_tuple(env, am_connection_closed);
+    }
+    int previous = sqlite3_limit(conn->db, category, value);
+    connection_release_lock(conn);
+    return make_ok_tuple(env, enif_make_int(env, previous));
+}
+
 ///
 /// Reset the prepared statement
 ///
@@ -2357,6 +2377,7 @@ static ErlNifFunc nif_funcs[] = {
   {"changes", 1, exqlite_changes, ERL_NIF_DIRTY_JOB_IO_BOUND},
   {"prepare", 2, exqlite_prepare, ERL_NIF_DIRTY_JOB_IO_BOUND},
   {"prepare_single", 2, exqlite_prepare_single, ERL_NIF_DIRTY_JOB_IO_BOUND},
+  {"limit", 3, exqlite_limit, ERL_NIF_DIRTY_JOB_IO_BOUND},
   {"reset", 1, exqlite_reset, ERL_NIF_DIRTY_JOB_CPU_BOUND},
   {"bind_parameter_count", 1, exqlite_bind_parameter_count, 0},
   {"bind_parameter_index", 2, exqlite_bind_parameter_index, 0},
