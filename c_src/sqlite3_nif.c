@@ -1215,6 +1215,32 @@ exqlite_multi_step(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
     return enif_make_tuple2(env, am_rows, rows);
 }
 
+// Measure every cell before copying any result into BEAM memory.
+static int
+row_fits_budget(sqlite3_stmt* statement, ErlNifUInt64 remaining)
+{
+    int count = sqlite3_column_count(statement);
+    for (int i = 0; i < count; i++) {
+        ErlNifUInt64 bytes;
+        switch (sqlite3_column_type(statement, i)) {
+            case SQLITE_INTEGER:
+            case SQLITE_FLOAT:
+                bytes = 8;
+                break;
+            case SQLITE_TEXT:
+            case SQLITE_BLOB:
+                bytes = (ErlNifUInt64)sqlite3_column_bytes(statement, i);
+                break;
+            default:
+                bytes = 1;
+                break;
+        }
+        if (bytes > remaining) return 0;
+        remaining -= bytes;
+    }
+    return 1;
+}
+
 ///
 /// Invokes one step on the SQLite prepared statement's results. If multiple
 /// steps are being taken, throughput may suffer, but this does allow for
@@ -1228,8 +1254,9 @@ exqlite_step(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
     ERL_NIF_TERM result;
     statement_t* statement = NULL;
     connection_t* conn     = NULL;
+    ErlNifUInt64 budget = 0;
 
-    if (argc != 2) {
+    if ((argc != 2 && argc != 3) || (argc == 3 && !enif_get_uint64(env, argv[2], &budget))) {
         return enif_make_badarg(env);
     }
 
@@ -1257,6 +1284,17 @@ exqlite_step(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
     int rc = sqlite3_step(statement->statement);
     switch (rc) {
         case SQLITE_ROW:
+            if (argc == 3) {
+                int fits = row_fits_budget(statement->statement, budget);
+                int oom = sqlite3_errcode(conn->db) == SQLITE_NOMEM;
+                if (!fits || oom) {
+                    sqlite3_reset(statement->statement);
+                    connection_clear_caller(conn);
+                    connection_release_lock(conn);
+                    return make_error_tuple(env, oom ? am_out_of_memory
+                                                    : enif_make_atom(env, "result_too_large"));
+                }
+            }
             result = enif_make_tuple2(env, am_row, make_row(env, statement->statement));
             connection_clear_caller(conn);
             connection_release_lock(conn);
@@ -2387,6 +2425,7 @@ static ErlNifFunc nif_funcs[] = {
   {"bind_float", 3, exqlite_bind_float, 0},
   {"bind_null", 2, exqlite_bind_null, 0},
   {"step", 2, exqlite_step, ERL_NIF_DIRTY_JOB_IO_BOUND},
+  {"step", 3, exqlite_step, ERL_NIF_DIRTY_JOB_IO_BOUND},
   {"multi_step", 3, exqlite_multi_step, ERL_NIF_DIRTY_JOB_IO_BOUND},
   {"columns", 2, exqlite_columns, ERL_NIF_DIRTY_JOB_IO_BOUND},
   {"last_insert_rowid", 1, exqlite_last_insert_rowid, ERL_NIF_DIRTY_JOB_IO_BOUND},

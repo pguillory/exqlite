@@ -358,6 +358,20 @@ defmodule Exqlite.Sqlite3 do
       handle_nif_exception(e, __STACKTRACE__)
   end
 
+  @doc """
+  Steps one row with a byte budget checked before copying any result cells to
+  BEAM memory. Text/BLOB count their UTF-8/raw bytes, numbers count 8, NULL counts 1.
+  An oversized row returns `{:error, :result_too_large}` and resets the statement.
+  This does not bound SQLite's intermediate allocations; use `limit/3` as well.
+  """
+  @spec step(db(), statement(), non_neg_integer()) ::
+          :done | :busy | {:row, row()} | {:error, reason()}
+  def step(conn, statement, max_bytes) do
+    Sqlite3NIF.step(conn, statement, max_bytes)
+  rescue
+    e -> handle_nif_exception(e, __STACKTRACE__)
+  end
+
   @spec multi_step(db(), statement()) ::
           :busy | {:rows, [row()]} | {:done, [row()]} | {:error, reason()}
   def multi_step(conn, statement) do
