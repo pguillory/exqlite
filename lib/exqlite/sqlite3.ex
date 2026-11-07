@@ -188,6 +188,17 @@ defmodule Exqlite.Sqlite3 do
   def prepare(conn, sql), do: Sqlite3NIF.prepare(conn, sql)
 
   @doc """
+  Prepares exactly one statement. Rejects empty SQL, embedded NUL bytes and any
+  nonempty tail (including invalid SQL). Trailing comments and separators are allowed.
+  Unlike `prepare/2`, additional statements are never silently ignored.
+  Empty input or a nonempty tail returns `{:error, :multiple_statements}`;
+  an embedded NUL returns `{:error, :invalid_sql}`. Invalid first statements retain
+  SQLite's normal errors and first-statement preparation semantics.
+  """
+  @spec prepare_single(db(), String.t()) :: {:ok, statement()} | {:error, reason()}
+  def prepare_single(conn, sql), do: Sqlite3NIF.prepare_single(conn, sql)
+
+  @doc """
   Resets a prepared statement.
 
   See: https://sqlite.org/c3ref/reset.html

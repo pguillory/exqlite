@@ -763,8 +763,30 @@ exqlite_changes(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 ///
 /// Prepares an Sqlite3 statement for execution
 ///
-ERL_NIF_TERM
-exqlite_prepare(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+static int
+has_sql_tail(const char* tail)
+{
+    // The SQLite-provided tail starts at a statement boundary. Only skip trivia;
+    // preparing a rejected tail could itself apply a PRAGMA at compile time.
+    while (*tail) {
+        if (*tail == ' ' || *tail == '\t' || *tail == '\n' || *tail == '\r'
+            || *tail == '\f' || *tail == ';') {
+            tail++;
+        } else if (tail[0] == '-' && tail[1] == '-') {
+            while (*tail && *tail != '\n') tail++;
+        } else if (tail[0] == '/' && tail[1] == '*') {
+            tail += 2;
+            while (*tail && !(tail[0] == '*' && tail[1] == '/')) tail++;
+            if (*tail) tail += 2;
+        } else {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static ERL_NIF_TERM
+exqlite_prepare_impl(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[], int single)
 {
     assert(env);
 
@@ -785,6 +807,10 @@ exqlite_prepare(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 
     if (!enif_inspect_iolist_as_binary(env, enif_make_list2(env, argv[1], eos), &bin)) {
         return make_error_tuple(env, am_sql_not_iolist);
+    }
+
+    if (single && memchr(bin.data, 0, bin.size - 1) != NULL) {
+        return make_error_tuple(env, enif_make_atom(env, "invalid_sql"));
     }
 
     statement = enif_alloc_resource(statement_type, sizeof(statement_t));
@@ -815,7 +841,18 @@ exqlite_prepare(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
         return make_error_tuple(env, am_connection_closed);
     }
 
-    rc = sqlite3_prepare_v3(conn->db, (char*)bin.data, bin.size, 0, &statement->statement, NULL);
+    const char* tail = NULL;
+    rc = sqlite3_prepare_v3(conn->db, (char*)bin.data, bin.size, 0, &statement->statement, &tail);
+
+    if (single && rc == SQLITE_OK) {
+        if (statement->statement == NULL || has_sql_tail(tail)) {
+            result = make_error_tuple(env, enif_make_atom(env, "multiple_statements"));
+            connection_clear_caller(conn);
+            connection_release_lock(conn);
+            enif_release_resource(statement);
+            return result;
+        }
+    }
 
     if (rc != SQLITE_OK) {
         result = make_sqlite3_error_tuple(env, rc, conn->db);
@@ -832,6 +869,18 @@ exqlite_prepare(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
     enif_release_resource(statement);
 
     return make_ok_tuple(env, result);
+}
+
+ERL_NIF_TERM
+exqlite_prepare(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+    return exqlite_prepare_impl(env, argc, argv, 0);
+}
+
+ERL_NIF_TERM
+exqlite_prepare_single(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+    return exqlite_prepare_impl(env, argc, argv, 1);
 }
 
 ///
@@ -2307,6 +2356,7 @@ static ErlNifFunc nif_funcs[] = {
   {"execute", 2, exqlite_execute, ERL_NIF_DIRTY_JOB_IO_BOUND},
   {"changes", 1, exqlite_changes, ERL_NIF_DIRTY_JOB_IO_BOUND},
   {"prepare", 2, exqlite_prepare, ERL_NIF_DIRTY_JOB_IO_BOUND},
+  {"prepare_single", 2, exqlite_prepare_single, ERL_NIF_DIRTY_JOB_IO_BOUND},
   {"reset", 1, exqlite_reset, ERL_NIF_DIRTY_JOB_CPU_BOUND},
   {"bind_parameter_count", 1, exqlite_bind_parameter_count, 0},
   {"bind_parameter_index", 2, exqlite_bind_parameter_index, 0},
